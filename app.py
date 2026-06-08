@@ -18,7 +18,7 @@ API_ID = 33304113          # ← তোমার API_ID
 API_HASH = '4e4af20183712a922c8557f4f9911cb'  # ← তোমার API_HASH
 BOT_TOKEN = '8808491756:AAERHxQEa6guC2488-z4bFbKBbHB6Vw29P0'  # ← বট টোকেন
 YOUR_CHANNEL = '@smsotppopp'  # ← চ্যানেল ইউজারনাম
-WEBAPP_URL = 'https://your-site.netlify.app'  # ← Netlify URL
+WEBAPP_URL = 'https://golden-brioche-15018c.netlify.app/'  # ← Netlify URL
 # =======================================================
 
 temp_data = {}
